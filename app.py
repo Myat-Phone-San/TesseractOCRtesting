@@ -258,14 +258,10 @@ def main():
                 get_download_button(df_kv_pairs, True, 'doc', "📥 Download DOC (Word)", 'targeted_key_value_pairs', help_text="Saves the table data as a text file with a .doc extension.")
                 
     st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: gray;'>
-        Built with Streamlit, Tesseract, OpenCV, Pandas, and PyMuPDF.
-    </div>
-    """, unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
+
 
 
 
