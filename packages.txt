@@ -6,4 +6,3 @@ libxext6
 libice6
 libatlas-base-dev
 libhdf5-dev
-poppler-utils  <-- ADD THIS
