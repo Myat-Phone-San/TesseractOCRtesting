@@ -5,4 +5,4 @@ Pillow
 PyMuPDF
 streamlit
 pytesseract
-opencv-python==4.5.5.64
+opencv-python==4.8.0.74  <-- CHANGE THIS LINE
