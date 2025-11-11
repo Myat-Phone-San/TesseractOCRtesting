@@ -205,7 +205,7 @@ def get_download_button(data, is_dataframe, file_format, label, file_name_base, 
 
 def main():
     
-    st.title("🎯 Targeted Document OCR Extractor")
+    st.title("🎯Document OCR Extractor")
     st.markdown("Upload a document (Image or PDF) to extract the texts using predefined regions.")
     
     # 1. File Upload
@@ -266,4 +266,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
