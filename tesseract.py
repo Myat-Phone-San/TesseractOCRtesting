@@ -8,18 +8,24 @@ from io import BytesIO
 import re 
 import pytesseract
 
-# --- Configuration and Initialization (Tesseract Path) ---
+# --- Configuration and Initialization (Tesseract Path Removed) ---
 
-# Set the Tesseract executable path as requested by the user.
-TESSERACT_PATH = r"C:\Users\myatphonesan\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+# Tesseract is now installed as a system package on Streamlit Cloud via packages.txt
+# and is automatically added to the system PATH, so we no longer need to set
+# pytesseract.pytesseract.tesseract_cmd.
 
 def configure_tesseract():
-    """Sets the Tesseract command path."""
+    """Sets the Tesseract command path. (No longer needed on Streamlit Cloud)."""
+    # This function is now essentially a placeholder to ensure pytesseract is imported.
     try:
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+        # Check if pytesseract is available. If Tesseract is installed via packages.txt,
+        # pytesseract will find it automatically.
+        import pytesseract
+        pass
     except Exception as e:
-        # In a real-world scenario, you might raise an error here or use a fallback
-        st.error(f"Error setting Tesseract path. Please check if Tesseract is installed at: {TESSERACT_PATH}. Error details: {e}")
+        # If running locally without Tesseract installed, this error may still occur.
+        # On Streamlit Cloud, if packages.txt is correct, this should pass.
+        st.error(f"Error initializing Tesseract integration. Ensure Tesseract is installed on your system or configured correctly for the cloud. Error: {e}")
 
 # Set the page configuration early
 st.set_page_config(
@@ -71,6 +77,7 @@ def extract_fields_by_region(image_array):
             continue
 
         # 3. Run Tesseract on the cropped image
+        # Note: We must convert to RGB for pytesseract
         text_raw = pytesseract.image_to_string(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB), lang='eng').strip()
         
         # 4. Process the extracted text
@@ -81,13 +88,12 @@ def extract_fields_by_region(image_array):
             lines = [line.strip() for line in text_raw.split('\n') if line.strip()]
             
             # Simple heuristic for key-value pair based on the form's structure:
-            # - Key is usually the first part/line.
-            # - Value is usually the text that follows the key.
             
             # Find the line/part that contains the key label (case-insensitive and partial match)
             key_index = -1
             for i, line in enumerate(lines):
-                if key.split(' ')[0] in line: # Use first word of key for matching robustness
+                # Use first word of key for matching robustness
+                if key.split(' ')[0] in line: 
                     key_index = i
                     break
             
@@ -107,21 +113,24 @@ def extract_fields_by_region(image_array):
                 elif value_lines:
                     extracted_value = " ".join(value_lines)
                 
-            # If still '-', sometimes the entire region is just the value (e.g., if key wasn't captured well)
-            if extracted_value == '-' and len(lines) == 1 and key not in lines[0]:
-                 extracted_value = lines[0]
+                # If still '-', sometimes the entire region is just the value (e.g., if key wasn't captured well)
+                if extracted_value == '-' and len(lines) == 1 and key not in lines[0]:
+                     extracted_value = lines[0]
 
 
         # 5. Post-process specific fields for better presentation/accuracy
         if key == "Original Credit Amount" and extracted_value != '-':
             # Standardize output format
             if 'EUR' not in extracted_value.upper():
-                 # Assuming the currency is EUR based on the original image if not explicitly captured
-                 # Attempt to clean up amount
+                # Attempt to clean up amount
                 amount_match = re.search(r'[\d\.\,]+', extracted_value.replace(' ', ''))
                 if amount_match:
                     amount_str = amount_match.group(0).replace(',', '') # Remove commas used as thousands separator
-                    extracted_value = f"EUR {float(amount_str):,.2f}"
+                    # Using a simple check to see if it looks like a number before formatting
+                    try:
+                        extracted_value = f"EUR {float(amount_str):,.2f}"
+                    except ValueError:
+                        pass # Keep the raw extracted value if conversion fails
             
         elif key in ["Applicant Name", "Contact Person / Tel", "Beneficiary Name"] and extracted_value != '-':
             # For multi-line fields, clean up extra spaces/line noise
