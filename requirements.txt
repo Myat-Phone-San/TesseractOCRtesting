@@ -1,7 +1,8 @@
+# requirements.txt
 numpy
 pandas
 pdf2image
-Pillow  # Dependency for pdf2image/PIL
+Pillow 
 PyMuPDF
 streamlit
 pytesseract
