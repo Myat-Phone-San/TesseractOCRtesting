@@ -5,4 +5,4 @@ Pillow
 PyMuPDF
 streamlit
 pytesseract
-opencv-python==4.8.0.74  <-- CHANGE THIS LINE
+opencv-python-headless  # Use headless for server environments without a GUI
