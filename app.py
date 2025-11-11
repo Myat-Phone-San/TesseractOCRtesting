@@ -14,7 +14,7 @@ import os
 
 # Set the page configuration early
 st.set_page_config(
-    page_title="Targeted Document OCR Extractor",
+    page_title="Document OCR Extractor",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -266,5 +266,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
