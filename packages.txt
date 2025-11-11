@@ -1,3 +1,4 @@
+# packages.txt
 tesseract-ocr
 libglib2.0-0
 libsm6
