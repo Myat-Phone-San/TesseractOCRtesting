@@ -1,8 +1,1 @@
-# packages.txt
 tesseract-ocr
-libglib2.0-0
-libsm6
-libxext6
-libice6
-libatlas-base-dev
-libhdf5-dev
