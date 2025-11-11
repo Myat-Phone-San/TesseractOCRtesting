@@ -5,19 +5,34 @@ import streamlit as st
 import fitz # PyMuPDF
 from PIL import Image
 from io import BytesIO
-import re
+import re 
 import pytesseract
+import os
 
-# --- Configuration and Initialization ---
+# --- Configuration and Initialization (Tesseract Path) ---
 
-# Tesseract is now installed as a system package on Streamlit Cloud via packages.txt
+# NOTE for Deployment: The local Windows path is commented out.
+# On Streamlit Cloud, Tesseract will be installed using 'packages.txt' and will be 
+# automatically added to the system PATH, so pytesseract finds it without needing a hardcoded path.
+# TESSERACT_PATH = r"C:\Users\myatphonesan\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+
 def configure_tesseract():
-    """Placeholder function to ensure pytesseract is imported."""
+    """Checks for Tesseract and sets the command path if needed (locally)."""
     try:
-        import pytesseract
-        pass
+        # If running locally on Windows, uncomment the line below and ensure the path is correct.
+        # pytesseract.pytesseract.tesseract_cmd = r"C:\Users\myatphonesan\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+        
+        # We attempt to check the version to ensure it's callable in the environment.
+        pytesseract.get_tesseract_version()
+        # st.success("Tesseract successfully initialized.")
+    except pytesseract.TesseractNotFoundError:
+        st.error(
+            "Tesseract OCR engine not found. "
+            "Please ensure it is installed and in the system PATH for local use, "
+            "or check the `packages.txt` file for Streamlit Cloud deployment."
+        )
     except Exception as e:
-        st.error(f"Error initializing Tesseract integration. Error: {e}")
+        st.error(f"An unexpected error occurred during Tesseract configuration: {e}")
 
 # Set the page configuration early
 st.set_page_config(
@@ -27,28 +42,30 @@ st.set_page_config(
 )
 
 # --- Define Normalized Region Coordinates (0-1000 scale) ---
+# These coordinates define the rectangular areas containing BOTH the key and the value.
 # Normalized to 0-1000 for image independent scaling
 # [x_min, y_min, x_max, y_max]
 
 TARGET_FIELD_REGIONS = {
-    "Applicant Name": [50, 120, 480, 200],
+    "Applicant Name": [50, 120, 480, 200], # Captures Key and Value below it
     "Documentary Credit No.": [480, 120, 680, 200],
     "Original Credit Amount": [680, 120, 930, 200],
-    "Contact Person / Tel": [50, 200, 480, 300],
-    "Beneficiary Name": [50, 200, 480, 400],
+    "Contact Person / Tel": [50, 200, 480, 300], # Captures Key and Value below it
+    "Beneficiary Name": [50, 200, 480, 400], # Captures Key and Value below it
 }
 
 # --- Core Extraction Logic (Targeted by Region) ---
 
 def extract_fields_by_region(image_array):
     """
-    Extracts text for the five specified fields by cropping the image
+    Extracts text for the five specified fields by cropping the image 
     to predefined normalized regions and running Tesseract on each.
     """
     kv_data = {key: '-' for key in TARGET_FIELD_REGIONS.keys()}
     H, W, _ = image_array.shape
     
     # Placeholder for drawing boxes
+    # Ensure image_array is in BGR format for conversion to RGB for display
     img_boxes = cv2.cvtColor(image_array.copy(), cv2.COLOR_BGR2RGB)
     
     for key, (x_min_norm, y_min_norm, x_max_norm, y_max_norm) in TARGET_FIELD_REGIONS.items():
@@ -59,32 +76,39 @@ def extract_fields_by_region(image_array):
         x_max = int(x_max_norm * W / 1000)
         y_max = int(y_max_norm * H / 1000)
         
-        # 2. Crop the image to the target region
+        # 2. Crop the image to the target region (use the original BGR array for processing)
         cropped_img = image_array[y_min:y_max, x_min:x_max]
         
         if cropped_img.size == 0:
             continue
 
-        # 3. Run Tesseract on the cropped image
+        # 3. Run Tesseract on the cropped image (Tesseract often prefers RGB, so convert if using CV2 input)
+        # Note: If image_array is BGR, cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB) is correct for tesseract.
         text_raw = pytesseract.image_to_string(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB), lang='eng').strip()
         
         # 4. Process the extracted text
         extracted_value = '-'
         
         if text_raw:
+            # Clean up common OCR artifacts and split lines
             lines = [line.strip() for line in text_raw.split('\n') if line.strip()]
             
+            # Simple heuristic for key-value pair based on the form's structure:
             key_index = -1
             for i, line in enumerate(lines):
-                if key.split(' ')[0] in line:
+                # Use partial match for key robustness
+                if key.split(' ')[0].lower() in line.lower(): 
                     key_index = i
                     break
             
             if key_index != -1:
                 value_lines = lines[key_index + 1:]
                 
-                if not value_lines and len(lines) == 1 and key in lines[0]:
-                    key_end_index = lines[0].find(key) + len(key)
+                # Special handling for single-line fields where key and value are on the same line
+                if not value_lines and len(lines) == 1 and key.split(' ')[0].lower() in lines[0].lower():
+                    # Find the position of the key in the line
+                    key_end_index = lines[0].lower().find(key.lower()) + len(key)
+                    # The value is the rest of the line, after removing the key and any box lines/noise
                     value_on_same_line = lines[0][key_end_index:].strip().replace('—', '').replace('-', '').replace(':', '').replace('.', '').strip()
                     if value_on_same_line:
                         extracted_value = value_on_same_line
@@ -92,32 +116,37 @@ def extract_fields_by_region(image_array):
                 elif value_lines:
                     extracted_value = " ".join(value_lines)
                 
-                if extracted_value == '-' and len(lines) == 1 and key not in lines[0]:
-                     extracted_value = lines[0]
+            # If still '-', sometimes the entire region is just the value (e.g., if key wasn't captured well)
+            if extracted_value == '-' and len(lines) == 1 and key.split(' ')[0].lower() not in lines[0].lower():
+                extracted_value = lines[0]
 
 
         # 5. Post-process specific fields for better presentation/accuracy
         if key == "Original Credit Amount" and extracted_value != '-':
-            if 'EUR' not in extracted_value.upper():
-                amount_match = re.search(r'[\d\.\,]+', extracted_value.replace(' ', ''))
-                if amount_match:
-                    amount_str = amount_match.group(0).replace(',', '')
+            # Attempt to clean up amount
+            amount_match = re.search(r'[\d\.\,]+', extracted_value.replace(' ', ''))
+            if amount_match:
+                amount_str = amount_match.group(0).replace(',', '').replace(' ', '')
+                # Basic check for a decimal point for formatting
+                if '.' in amount_str:
                     try:
                         extracted_value = f"EUR {float(amount_str):,.2f}"
                     except ValueError:
-                        pass
-                
+                        pass # Keep the raw value if conversion fails
+        
         elif key in ["Applicant Name", "Contact Person / Tel", "Beneficiary Name"] and extracted_value != '-':
+            # For multi-line fields, clean up extra spaces/line noise
             extracted_value = extracted_value.replace('\n', ' ').strip()
         
         # Final cleanup for values
         if extracted_value and extracted_value != '-':
+            # Remove any leading/trailing non-alphanumeric noise
             kv_data[key] = extracted_value.strip()
 
         # Draw the box for visualization (Red border)
         cv2.rectangle(img_boxes, (x_min, y_min), (x_max, y_max), (255, 0, 0), 3)
 
-    # Convert the box-drawn image to PIL Image for Streamlit
+    # Convert the box-drawn image (which is already in RGB) to PIL Image for Streamlit
     img_with_boxes = Image.fromarray(img_boxes)
 
     # Convert KV data to DataFrame
@@ -126,7 +155,7 @@ def extract_fields_by_region(image_array):
 
     return df_kv_pairs, img_with_boxes
 
-# --- Utility Functions ---
+# --- Utility Functions (Modified) ---
 
 def handle_file_upload(uploaded_file):
     """Handles file uploads, converting them to an OpenCV array."""
@@ -139,8 +168,8 @@ def handle_file_upload(uploaded_file):
             with st.spinner("Converting PDF page 1 to image (150 DPI)..."):
                 doc = fitz.open(stream=file_bytes, filetype="pdf")
                 if doc.page_count == 0:
-                     st.error("Could not process PDF. The document is empty or unreadable.")
-                     return None
+                    st.error("Could not process PDF. The document is empty or unreadable.")
+                    return None
                 
                 page = doc.load_page(0)
                 DPI = 150
@@ -149,7 +178,7 @@ def handle_file_upload(uploaded_file):
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 
                 img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-                img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR) 
                 doc.close()
                 return img_array
             
@@ -182,9 +211,10 @@ def get_download_button(data, is_dataframe, file_format, label, file_name_base, 
         help=help_text
     )
 
-# --- Streamlit Application Layout ---
+# --- Streamlit Application Layout (Simplified) ---
 
 def main():
+    # Configure Tesseract path first (this checks for its existence)
     configure_tesseract()
     
     st.title("🎯 Targeted Document OCR Extractor (Tesseract)")
@@ -223,6 +253,7 @@ def main():
         with col_data:
             st.markdown("### 🔑 Extracted Key-Value Pairs")
             
+            # Displaying the custom, refined output
             st.dataframe(df_kv_pairs[['Key Label (Form Text)', 'Extracted Value']], use_container_width=True, hide_index=True)
             
             st.markdown("#### Download Options")
@@ -236,7 +267,7 @@ def main():
                 
             with col_word:
                 get_download_button(df_kv_pairs, True, 'doc', "📥 Download DOC (Word)", 'targeted_key_value_pairs', help_text="Saves the table data as a text file with a .doc extension.")
-                
+            
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: gray;'>
