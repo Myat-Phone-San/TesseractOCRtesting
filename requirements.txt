@@ -1,8 +1,7 @@
-# requirements.txt
 numpy
 pandas
 Pillow
 PyMuPDF
 streamlit
 pytesseract
-opencv-python
+opencv-python==4.5.5.64  <-- PIN THIS VERSION
