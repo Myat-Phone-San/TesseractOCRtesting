@@ -5,3 +5,4 @@ PyMuPDF
 streamlit
 pytesseract
 opencv-python
+
