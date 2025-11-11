@@ -1,8 +1,7 @@
 # requirements.txt
 numpy
 pandas
-pdf2image
-Pillow 
+Pillow
 PyMuPDF
 streamlit
 pytesseract
