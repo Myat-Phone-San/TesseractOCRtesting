@@ -1,8 +1,7 @@
-# requirements.txt
 numpy
 pandas
 Pillow
 PyMuPDF
 streamlit
 pytesseract
-opencv-python-headless  # Use headless for server environments without a GUI
+opencv-python
