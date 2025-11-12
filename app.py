@@ -202,7 +202,7 @@ def get_download_button(data, is_dataframe, file_format, label, file_name_base, 
 def main():
     
     st.title("🎯Document OCR Extractor (Tesseract)")
-    st.markdown("This tool uses **Tesseract OCR (English only)** to extract five specific fields from forms using predefined, targeted regions.")
+    st.markdown("This tool uses **Tesseract OCR** to extract fields from forms using predefined, targeted regions.")
     
     # 1. File Upload
     uploaded_file = st.file_uploader(
@@ -253,11 +253,8 @@ def main():
                 get_download_button(df_kv_pairs, True, 'doc', "📥 Download DOC (Word)", 'targeted_key_value_pairs', help_text="Saves the table data as a text file with a .doc extension.")
                 
     st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: gray;'>
-        Built with Tesseract, OpenCV, Pandas, Streamlit, and PyMuPDF.
-    </div>
-    """, unsafe_allow_html=True)
+ 
 
 if __name__ == '__main__':
     main()
+
