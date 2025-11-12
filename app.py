@@ -4,13 +4,14 @@ import pandas as pd
 import streamlit as st
 import fitz # PyMuPDF
 from PIL import Image
+from io import BytesIO
 import re 
 import pytesseract
-import os
 
-# --- Configuration for Streamlit Cloud ---
-# NOTE: Removed hardcoded Tesseract path (TESSERACT_PATH, configure_tesseract)
-# as Streamlit Cloud handles the installation via packages.txt.
+# --- Configuration and Initialization ---
+# Removed TESSERACT_PATH and configure_tesseract() function.
+# Tesseract will be automatically found on the system path after 
+# being installed via packages.txt in the cloud environment.
 
 # Set the page configuration early
 st.set_page_config(
@@ -21,7 +22,6 @@ st.set_page_config(
 
 # --- Define Normalized Region Coordinates (0-1000 scale) ---
 # These coordinates define the rectangular areas containing BOTH the key and the value.
-# The OCR will be run on these small, isolated sections.
 # Normalized to 0-1000 for image independent scaling
 # [x_min, y_min, x_max, y_max]
 
@@ -30,7 +30,8 @@ TARGET_FIELD_REGIONS = {
     "Documentary Credit No.": [480, 120, 680, 200],
     "Original Credit Amount": [680, 120, 930, 200],
     "Contact Person / Tel": [50, 200, 480, 300], # Captures Key and Value below it
-    "Beneficiary Name": [50, 200, 480, 400], # Captures Key and Value below it
+    # Adjusted Y-min slightly for Beneficiary to prevent overlap with Contact Person
+    "Beneficiary Name": [50, 300, 480, 400], 
 }
 
 # --- Core Extraction Logic (Targeted by Region) ---
@@ -39,12 +40,11 @@ def extract_fields_by_region(image_array):
     """
     Extracts text for the five specified fields by cropping the image 
     to predefined normalized regions and running Tesseract on each.
-    Also draws bounding boxes on a copy of the image for visualization.
     """
     kv_data = {key: '-' for key in TARGET_FIELD_REGIONS.keys()}
     H, W, _ = image_array.shape
     
-    # Placeholder for drawing boxes - ensure image is in RGB for drawing/display
+    # Placeholder for drawing boxes
     img_boxes = cv2.cvtColor(image_array.copy(), cv2.COLOR_BGR2RGB)
     
     for key, (x_min_norm, y_min_norm, x_max_norm, y_max_norm) in TARGET_FIELD_REGIONS.items():
@@ -55,17 +55,15 @@ def extract_fields_by_region(image_array):
         x_max = int(x_max_norm * W / 1000)
         y_max = int(y_max_norm * H / 1000)
         
-        # 2. Crop the image to the target region (use the original image array for OCR)
+        # 2. Crop the image to the target region
         cropped_img = image_array[y_min:y_max, x_min:x_max]
         
         if cropped_img.size == 0:
             continue
 
-        # Convert cropped BGR (OpenCV default) to RGB for Pytesseract compatibility
-        cropped_img_rgb = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)
-        
-        # 3. Run Tesseract on the cropped image
-        text_raw = pytesseract.image_to_string(cropped_img_rgb, lang='eng').strip()
+        # 3. Run Tesseract on the cropped image (English only)
+        # Using lang='eng' as requested.
+        text_raw = pytesseract.image_to_string(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB), lang='eng').strip()
         
         # 4. Process the extracted text
         extracted_value = '-'
@@ -74,11 +72,14 @@ def extract_fields_by_region(image_array):
             # Clean up common OCR artifacts and split lines
             lines = [line.strip() for line in text_raw.split('\n') if line.strip()]
             
-            # Find the line/part that contains the key label (case-insensitive and partial match)
+            # Simple heuristic to find the value after the key label
             key_index = -1
+            # Use the most significant part of the key for matching
+            key_match_str = key.split(' ')[0].split('/')[0] 
+            
             for i, line in enumerate(lines):
-                # Use first word of key for matching robustness
-                if key.split(' ')[0].lower() in line.lower(): 
+                # Search for the key match string robustly
+                if re.search(r'\b' + re.escape(key_match_str) + r'\b', line, re.IGNORECASE):
                     key_index = i
                     break
             
@@ -86,47 +87,47 @@ def extract_fields_by_region(image_array):
                 # The value is all subsequent text joined together
                 value_lines = lines[key_index + 1:]
                 
-                # Special handling for single-line fields where key and value are on the same line
-                if not value_lines and len(lines) == 1 and key.lower() in lines[0].lower():
-                    # Find the position of the key in the line
-                    key_end_index = lines[0].lower().find(key.lower()) + len(key)
-                    # The value is the rest of the line, after removing the key and any noise
-                    value_on_same_line = lines[0][key_end_index:].strip().replace('—', '').replace('-', '').replace(':', '').replace('.', '').strip()
-                    if value_on_same_line:
-                        extracted_value = value_on_same_line
-                
-                elif value_lines:
+                # Handling single-line or multi-line key/value split
+                if value_lines:
                     extracted_value = " ".join(value_lines)
-                
-            # Fallback: if no key was found but there's only one line of text, assume it's the value
-            if extracted_value == '-' and len(lines) == 1 and key.lower() not in lines[0].lower():
-                    extracted_value = lines[0]
+                else:
+                    # If key is found but no subsequent lines, try extracting value from the same line
+                    key_clean = re.escape(key).replace(r'\ ', r'\\s*')
+                    # Regex to capture content after the key, ignoring common delimiters
+                    match = re.search(key_clean + r'[\s:-]*\s*(.*)', lines[key_index], re.IGNORECASE)
+                    if match and match.group(1).strip():
+                        extracted_value = match.group(1).strip()
+            
+            # Fallback: If no key found, assume the whole text is the value (common for fields where key is outside the box)
+            if extracted_value == '-' and lines:
+                 # Check if the text is clearly not the key itself
+                if not any(re.search(r'\b' + re.escape(key.split(' ')[0]) + r'\b', line, re.IGNORECASE) for line in lines):
+                    extracted_value = " ".join(lines)
 
 
         # 5. Post-process specific fields for better presentation/accuracy
         if key == "Original Credit Amount" and extracted_value != '-':
-            # Attempt to clean up amount
+            # Attempt to clean and format the amount
             amount_match = re.search(r'[\d\.\,]+', extracted_value.replace(' ', ''))
             if amount_match:
-                amount_str = amount_match.group(0).replace(',', '').strip() # Remove commas used as thousands separator
+                amount_str = amount_match.group(0).replace(',', '') # Remove commas used as thousands separator
                 try:
-                    # Format as EUR 1,234.56
-                    extracted_value = f"EUR {float(amount_str):,.2f}"
+                    amount_float = float(amount_str)
+                    # Assuming EUR based on common form context if not explicitly captured
+                    extracted_value = f"EUR {amount_float:,.2f}"
                 except ValueError:
-                    extracted_value = f"EUR {amount_str}" # Fallback
-            else:
-                extracted_value = extracted_value.strip()
+                    # If conversion fails, keep the original cleaned string
+                    pass
             
-        elif extracted_value != '-':
+        elif key in ["Applicant Name", "Contact Person / Tel", "Beneficiary Name"] and extracted_value != '-':
             # For multi-line fields, clean up extra spaces/line noise
             extracted_value = extracted_value.replace('\n', ' ').strip()
         
         # Final cleanup for values
         if extracted_value and extracted_value != '-':
+            # Remove line drawing characters like | or - if they appear at ends
+            extracted_value = extracted_value.strip('|.- ')
             kv_data[key] = extracted_value.strip()
-        else:
-             kv_data[key] = '-'
-
 
         # Draw the box for visualization (Red border)
         cv2.rectangle(img_boxes, (x_min, y_min), (x_max, y_max), (255, 0, 0), 3)
@@ -143,7 +144,7 @@ def extract_fields_by_region(image_array):
 # --- Utility Functions ---
 
 def handle_file_upload(uploaded_file):
-    """Handles file uploads, converting them to an OpenCV BGR array."""
+    """Handles file uploads, converting them to an OpenCV array."""
     file_type = uploaded_file.type
     
     try:
@@ -156,24 +157,20 @@ def handle_file_upload(uploaded_file):
                     st.error("Could not process PDF. The document is empty or unreadable.")
                     return None
                 
-                # Render the first page at high DPI
                 page = doc.load_page(0)
                 DPI = 150
                 zoom_factor = DPI / 72
                 matrix = fitz.Matrix(zoom_factor, zoom_factor)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 
-                # Convert PyMuPDF pixmap to numpy array (RGB)
-                img_array_rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-                # Convert RGB to BGR (OpenCV format)
-                img_array_bgr = cv2.cvtColor(img_array_rgb, cv2.COLOR_RGB2BGR) 
+                img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR) 
                 doc.close()
-                return img_array_bgr
+                return img_array
             
         else: # Handle image files (jpg, png, etc.)
-            # Decode file bytes directly into an OpenCV BGR array
-            img_array_bgr = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), cv2.IMREAD_COLOR)
-            return img_array_bgr
+            img_array = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), cv2.IMREAD_COLOR)
+            return img_array
 
     except Exception as e:
         st.error(f"Error loading file. Check if it's a valid Image or non-encrypted PDF. Error details: {e}")
@@ -188,8 +185,7 @@ def get_download_button(data, is_dataframe, file_format, label, file_name_base, 
         mime = 'text/csv'
         final_name = f'{file_name_base}.csv'
     else: # txt or doc
-        # Convert DataFrame to a clean string format
-        data_out = df.to_string(index=False, header=True).encode('utf-8')
+        data_out = df.to_string(index=False).encode('utf-8')
         mime = 'text/plain' if file_format == 'txt' else 'application/msword'
         final_name = f'{file_name_base}.{file_format}'
         
@@ -201,12 +197,12 @@ def get_download_button(data, is_dataframe, file_format, label, file_name_base, 
         help=help_text
     )
 
-# --- Streamlit Application Layout ---
+# --- Streamlit Application Layout (Simplified) ---
 
 def main():
     
-    st.title("🎯Document OCR Extractor")
-    st.markdown("Upload a document (Image or PDF) to extract the texts using predefined regions.")
+    st.title("🎯Document OCR Extractor (Tesseract)")
+    st.markdown("This tool uses **Tesseract OCR (English only)** to extract five specific fields from forms using predefined, targeted regions.")
     
     # 1. File Upload
     uploaded_file = st.file_uploader(
@@ -217,26 +213,25 @@ def main():
 
     st.markdown("---")
 
-    image_array_bgr = None
+    image_array = None
     if uploaded_file is not None:
         st.info(f"File **'{uploaded_file.name}'** uploaded. Starting file conversion...")
-        image_array_bgr = handle_file_upload(uploaded_file)
+        image_array = handle_file_upload(uploaded_file)
 
     # --- OCR Processing and Results Display ---
 
-    if image_array_bgr is not None:
+    if image_array is not None:
         st.subheader("2. Extracted Results")
             
         # Run targeted extraction
         with st.spinner("Running targeted OCR on predefined regions..."):
-            df_kv_pairs, img_with_boxes = extract_fields_by_region(image_array_bgr)
+            df_kv_pairs, img_with_boxes = extract_fields_by_region(image_array)
 
         # Display results in a two-column layout
         col_img, col_data = st.columns([1, 2])
         
         with col_img:
             st.markdown("### 🖼️ OCR Visualization (Targeted Regions)")
-            # img_with_boxes is already RGB (for Streamlit image display)
             st.image(img_with_boxes, caption="Targeted extraction regions (Red Boxes)", use_column_width=True)
 
         with col_data:
@@ -258,11 +253,11 @@ def main():
                 get_download_button(df_kv_pairs, True, 'doc', "📥 Download DOC (Word)", 'targeted_key_value_pairs', help_text="Saves the table data as a text file with a .doc extension.")
                 
     st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: gray;'>
+        Built with Tesseract, OpenCV, Pandas, Streamlit, and PyMuPDF.
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
