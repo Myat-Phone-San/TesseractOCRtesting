@@ -13,7 +13,8 @@ import os
 # as Streamlit Cloud handles the installation via packages.txt.
 
 # Set the page configuration early
-st.set_config(
+# FIXED: Reverted st.set_config() back to the correct st.set_page_config()
+st.set_page_config(
     page_title="Document OCR Extractor",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,7 +31,7 @@ TARGET_FIELD_REGIONS = {
     "Documentary Credit No.": [480, 120, 680, 200],
     "Original Credit Amount": [680, 120, 930, 200],
     "Contact Person / Tel": [50, 200, 480, 300], # Captures Key and Value below it
-    # Adjusted Beneficiary Name Y-coordinate to avoid overlap with Contact Person
+    # Adjusted Beneficiary Name Y-coordinate to avoid potential overlap
     "Beneficiary Name": [50, 300, 480, 400],
 }
 
@@ -66,7 +67,6 @@ def extract_fields_by_region(image_array):
         cropped_img_rgb = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)
         
         # 3. Run Tesseract on the cropped image
-        # Use config to specify Page Segmentation Mode (PSM) if needed, e.g., psm=6 for single uniform block
         text_raw = pytesseract.image_to_string(cropped_img_rgb, lang='eng').strip()
         
         # 4. Process the extracted text
@@ -109,7 +109,6 @@ def extract_fields_by_region(image_array):
                 
             # Fallback: if no key was found, but there are only a few lines, assume the first line is the key
             # and the remaining text is the value, or if only one line, assume it's the value.
-            # (Keeping the original safer logic, which relies on key detection)
             if extracted_value == '-' and len(lines) == 1 and key.lower() not in lines[0].lower():
                  extracted_value = lines[0]
 
@@ -122,7 +121,6 @@ def extract_fields_by_region(image_array):
                 amount_str = amount_match.group(0).replace(',', '').strip() # Remove commas used as thousands separator
                 try:
                     # Format as EUR 1,234.56
-                    # Note: Using float conversion here is useful but might lose precision on large numbers
                     extracted_value = f"EUR {float(amount_str):,.2f}"
                 except ValueError:
                     extracted_value = f"EUR {amount_str}" # Fallback
