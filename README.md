@@ -123,7 +123,7 @@ http://localhost:8501
 
 **Myat Phone San**  
 📧 myatphonesan131619.email@example.com  
-🔗 [LinkedIn](http://linkedin.com/in/myat-phone-san-3759842a8/) • [GitHub](https://github.com/Myat-Phone-San)
+ • [GitHub](https://github.com/Myat-Phone-San)
 
 ---
 
