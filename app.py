@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 import fitz # PyMuPDF
 from PIL import Image
-import re 
+import re
 import pytesseract
 import os
 
@@ -13,7 +13,7 @@ import os
 # as Streamlit Cloud handles the installation via packages.txt.
 
 # Set the page configuration early
-st.set_page_config(
+st.set_config(
     page_title="Document OCR Extractor",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,7 +30,8 @@ TARGET_FIELD_REGIONS = {
     "Documentary Credit No.": [480, 120, 680, 200],
     "Original Credit Amount": [680, 120, 930, 200],
     "Contact Person / Tel": [50, 200, 480, 300], # Captures Key and Value below it
-    "Beneficiary Name": [50, 200, 480, 400], # Captures Key and Value below it
+    # Adjusted Beneficiary Name Y-coordinate to avoid overlap with Contact Person
+    "Beneficiary Name": [50, 300, 480, 400],
 }
 
 # --- Core Extraction Logic (Targeted by Region) ---
@@ -65,6 +66,7 @@ def extract_fields_by_region(image_array):
         cropped_img_rgb = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)
         
         # 3. Run Tesseract on the cropped image
+        # Use config to specify Page Segmentation Mode (PSM) if needed, e.g., psm=6 for single uniform block
         text_raw = pytesseract.image_to_string(cropped_img_rgb, lang='eng').strip()
         
         # 4. Process the extracted text
@@ -76,9 +78,13 @@ def extract_fields_by_region(image_array):
             
             # Find the line/part that contains the key label (case-insensitive and partial match)
             key_index = -1
+            
+            # Create a more generic regex for finding the key, accounting for optional punctuation or spacing
+            key_search_pattern = re.compile(re.escape(key.split(' ')[0]) + r'.*?', re.IGNORECASE)
+
             for i, line in enumerate(lines):
-                # Use first word of key for matching robustness
-                if key.split(' ')[0].lower() in line.lower(): 
+                # Search using the pattern for robustness
+                if key_search_pattern.search(line): 
                     key_index = i
                     break
             
@@ -87,20 +93,25 @@ def extract_fields_by_region(image_array):
                 value_lines = lines[key_index + 1:]
                 
                 # Special handling for single-line fields where key and value are on the same line
-                if not value_lines and len(lines) == 1 and key.lower() in lines[0].lower():
+                if not value_lines and len(lines) == 1:
                     # Find the position of the key in the line
-                    key_end_index = lines[0].lower().find(key.lower()) + len(key)
-                    # The value is the rest of the line, after removing the key and any noise
-                    value_on_same_line = lines[0][key_end_index:].strip().replace('—', '').replace('-', '').replace(':', '').replace('.', '').strip()
-                    if value_on_same_line:
-                        extracted_value = value_on_same_line
+                    key_match = re.search(re.escape(key), lines[0], re.IGNORECASE)
+                    
+                    if key_match:
+                        # The value is the rest of the line, after removing the key and any noise
+                        key_end_index = key_match.end()
+                        value_on_same_line = lines[0][key_end_index:].strip().replace('—', '').replace('-', '').replace(':', '').replace('.', '').strip()
+                        if value_on_same_line:
+                            extracted_value = value_on_same_line
                 
                 elif value_lines:
                     extracted_value = " ".join(value_lines)
                 
-            # Fallback: if no key was found but there's only one line of text, assume it's the value
+            # Fallback: if no key was found, but there are only a few lines, assume the first line is the key
+            # and the remaining text is the value, or if only one line, assume it's the value.
+            # (Keeping the original safer logic, which relies on key detection)
             if extracted_value == '-' and len(lines) == 1 and key.lower() not in lines[0].lower():
-                    extracted_value = lines[0]
+                 extracted_value = lines[0]
 
 
         # 5. Post-process specific fields for better presentation/accuracy
@@ -111,6 +122,7 @@ def extract_fields_by_region(image_array):
                 amount_str = amount_match.group(0).replace(',', '').strip() # Remove commas used as thousands separator
                 try:
                     # Format as EUR 1,234.56
+                    # Note: Using float conversion here is useful but might lose precision on large numbers
                     extracted_value = f"EUR {float(amount_str):,.2f}"
                 except ValueError:
                     extracted_value = f"EUR {amount_str}" # Fallback
@@ -159,7 +171,8 @@ def handle_file_upload(uploaded_file):
                 # Render the first page at high DPI
                 page = doc.load_page(0)
                 DPI = 150
-                zoom_factor = DPI / 72
+                # Use a higher zoom factor for better Tesseract results on small text
+                zoom_factor = DPI / 72 
                 matrix = fitz.Matrix(zoom_factor, zoom_factor)
                 pix = page.get_pixmap(matrix=matrix, alpha=False)
                 
@@ -261,8 +274,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
